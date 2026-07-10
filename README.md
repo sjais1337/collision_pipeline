@@ -123,11 +123,6 @@ executions share a freely chosen input chaining value.
 : Generated DC and concrete-pair `.cvc` files plus STP `.out` counterexamples.
   These files can become large during long searches.
 
-`run_one_lc.py`
-: Older all-in-one wrapper. It still imports `find_collision.py`, which is not in
-  the current directory. Use `dc_search.solve_cascade()` followed by
-  `guided_pair.py` instead.
-
 ## Requirements
 
 - Python 3
