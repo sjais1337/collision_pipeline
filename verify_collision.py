@@ -67,16 +67,25 @@ def expand_schedule(words16, R):
     return W
 
 
-def compress_full(cv_in, words16, R):
-    """cv_in = (a,b,c,d,e,f,g,h) entering step 0; words16 = W0..W15.
-    Returns the 8-register state after R steps of reduced SHA-256."""
+def compression_trace(cv_in, words16, R):
+    """Return the final state, schedule, and per-step A/E values."""
     a, b, c, d, e, f, g, h = [w & MASK for w in cv_in]
     W = expand_schedule(words16, R)
+    A = []
+    E = []
     for i in range(R):
         T1 = (h + Sigma1(e) + Ch(e, f, g) + k_constant_256[i] + W[i]) & MASK
         T2 = (Sigma0(a) + Maj(a, b, c)) & MASK
         h, g, f, e, d, c, b, a = g, f, e, (d + T1) & MASK, c, b, a, (T1 + T2) & MASK
-    return (a, b, c, d, e, f, g, h)
+        A.append(a)
+        E.append(e)
+    return (a, b, c, d, e, f, g, h), W, A, E
+
+
+def compress_full(cv_in, words16, R):
+    """Return the 8-register state after R reduced SHA-256 steps."""
+    final_state, _, _, _ = compression_trace(cv_in, words16, R)
+    return final_state
 
 
 def verify_pair(cv_in, words16_M, words16_Mp, R):

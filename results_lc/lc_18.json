@@ -1,0 +1,348 @@
+{
+  "best": {
+    "R": 18,
+    "start_step": 6,
+    "span": 6,
+    "active_words": [
+      6,
+      11
+    ],
+    "num_active": 2,
+    "cond_total": 0
+  },
+  "alternates": [
+    {
+      "R": 18,
+      "start_step": 7,
+      "span": 6,
+      "active_words": [
+        7,
+        12
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 8,
+      "span": 6,
+      "active_words": [
+        8,
+        13
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 5,
+      "span": 7,
+      "active_words": [
+        5,
+        11
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 6,
+      "span": 7,
+      "active_words": [
+        6,
+        12
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 7,
+      "span": 7,
+      "active_words": [
+        7,
+        13
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 4,
+      "span": 8,
+      "active_words": [
+        4,
+        11
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 5,
+      "span": 8,
+      "active_words": [
+        5,
+        12
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 6,
+      "span": 8,
+      "active_words": [
+        6,
+        13
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 9,
+      "span": 8,
+      "active_words": [
+        9,
+        16
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 10,
+      "span": 8,
+      "active_words": [
+        10,
+        17
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 4,
+      "span": 9,
+      "active_words": [
+        4,
+        12
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 5,
+      "span": 9,
+      "active_words": [
+        5,
+        13
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 4,
+      "span": 10,
+      "active_words": [
+        4,
+        13
+      ],
+      "num_active": 2,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 9,
+      "span": 6,
+      "active_words": [
+        9,
+        14
+      ],
+      "num_active": 2,
+      "cond_total": 1
+    },
+    {
+      "R": 18,
+      "start_step": 10,
+      "span": 6,
+      "active_words": [
+        10,
+        15
+      ],
+      "num_active": 2,
+      "cond_total": 1
+    },
+    {
+      "R": 18,
+      "start_step": 11,
+      "span": 6,
+      "active_words": [
+        11,
+        14,
+        16
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 12,
+      "span": 6,
+      "active_words": [
+        12,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 11,
+      "span": 7,
+      "active_words": [
+        11,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 8,
+      "span": 9,
+      "active_words": [
+        8,
+        14,
+        16
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 7,
+      "span": 10,
+      "active_words": [
+        7,
+        14,
+        16
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 8,
+      "span": 10,
+      "active_words": [
+        8,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 6,
+      "span": 11,
+      "active_words": [
+        6,
+        14,
+        16
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 7,
+      "span": 11,
+      "active_words": [
+        7,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 5,
+      "span": 12,
+      "active_words": [
+        5,
+        14,
+        16
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 6,
+      "span": 12,
+      "active_words": [
+        6,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 4,
+      "span": 13,
+      "active_words": [
+        4,
+        14,
+        16
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 5,
+      "span": 13,
+      "active_words": [
+        5,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 4,
+      "span": 14,
+      "active_words": [
+        4,
+        15,
+        17
+      ],
+      "num_active": 3,
+      "cond_total": 0
+    },
+    {
+      "R": 18,
+      "start_step": 8,
+      "span": 7,
+      "active_words": [
+        8,
+        9,
+        14
+      ],
+      "num_active": 3,
+      "cond_total": 1
+    }
+  ]
+}

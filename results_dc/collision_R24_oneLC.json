@@ -1,0 +1,81 @@
+{
+  "R": 24,
+  "status": "found",
+  "verified": true,
+  "collision_verified": true,
+  "signed_dc_verified": true,
+  "signed_dc_errors": [],
+  "guidance": "exact_signed_dc",
+  "cv_in_hex": [
+    "cf538773",
+    "c33e326e",
+    "89f8d093",
+    "aeff86d0",
+    "23aa73c1",
+    "6e1bff27",
+    "1dcf66c7",
+    "c8589428"
+  ],
+  "W_M_hex": [
+    "431ff923",
+    "dece5b2f",
+    "c21f6a4a",
+    "03da187d",
+    "f074bba4",
+    "109bbc9e",
+    "0a476f08",
+    "1aca69e0",
+    "07561862",
+    "4959f620",
+    "5cee1eb3",
+    "a6277d0b",
+    "7bb0019d",
+    "f1768853",
+    "241d92f4",
+    "233c1e5b"
+  ],
+  "W_Mprime_hex": [
+    "431ff923",
+    "dece5b2f",
+    "c21f6a4a",
+    "03da187d",
+    "f074bba4",
+    "109bbc9e",
+    "0a476f08",
+    "1aca69e0",
+    "07561862",
+    "4959f620",
+    "5cee1eb6",
+    "a6277d08",
+    "7bb1219d",
+    "f176a853",
+    "241d92f4",
+    "233c1e5b"
+  ],
+  "final_state_M": [
+    "9474f2ba",
+    "e30e73c8",
+    "0fd1d44b",
+    "1b710083",
+    "4ddde7a9",
+    "da2abe5e",
+    "91035abd",
+    "bca312f4"
+  ],
+  "final_state_Mprime": [
+    "9474f2ba",
+    "e30e73c8",
+    "0fd1d44b",
+    "1b710083",
+    "4ddde7a9",
+    "da2abe5e",
+    "91035abd",
+    "bca312f4"
+  ],
+  "message_diff_input_words": [
+    10,
+    11,
+    12,
+    13
+  ]
+}

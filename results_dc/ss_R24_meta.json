@@ -1,0 +1,22 @@
+{
+  "R": 24,
+  "local_collision": [
+    10,
+    11,
+    12,
+    13,
+    17,
+    18
+  ],
+  "start": 10,
+  "span": 9,
+  "dc_out": "/home/sjais/projects/sha2/experiments_small_rounds/results_dc/_work/dc_ss_R24_o5_47.out",
+  "stage_optima": {
+    "o1": 5,
+    "o2": 12,
+    "o3": 2,
+    "o4": 8,
+    "o5": 47
+  },
+  "status": "minimized"
+}
