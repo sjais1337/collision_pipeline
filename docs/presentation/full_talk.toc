@@ -1,0 +1,8 @@
+\beamer@sectionintoc {1}{The idea}{3}{0}{1}
+\beamer@sectionintoc {2}{Reading a DC}{4}{0}{2}
+\beamer@sectionintoc {3}{Two models}{7}{0}{3}
+\beamer@sectionintoc {4}{2024}{10}{0}{4}
+\beamer@sectionintoc {5}{2025}{13}{0}{5}
+\beamer@sectionintoc {6}{2026}{15}{0}{6}
+\beamer@sectionintoc {7}{Message modification}{21}{0}{7}
+\beamer@sectionintoc {8}{Further work}{23}{0}{8}
