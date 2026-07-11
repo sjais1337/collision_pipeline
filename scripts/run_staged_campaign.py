@@ -2,12 +2,14 @@
 """Staged O1 -> O2 -> O3 campaign (stops after O3).
 
 Phase plan (defaults target a 48-vCPU EC2 host):
-  O1: run up to 22 LCs in parallel for 2.5h each; wait at least 2h even if early.
-      Keep last 3 SAT witnesses per LC. Advance LCs with O1 optimum < 30.
-  O2: same 2.5h / 2h-wait / keep-3 policy on survivors. Advance LCs that found O2.
-  O3: redistribute all usable vCPUs across survivors; 24h budget; keep best only.
+  O1: up to 22 LCs x 2 threads, 2.5h budget, 2h min-wait, keep last 3.
+      Advance if O1 optimum < 30.
+  O2: survivors get equal max thread split, 2.5h / 2h-wait / keep-3.
+      Advance if O2 optimum < 15.
+  O3: survivors get equal max thread split, 24h budget, keep best only.
 
-Does not modify dc_search.py / guided_pair.py. New scripts only.
+Resume with --start-from o2|o3 when prior stage result JSONs exist.
+Does not modify dc_search.py / guided_pair.py.
 """
 
 import argparse
@@ -19,14 +21,15 @@ import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Defaults matching the requested policy.
-O12_BUDGET_S = 9000       # 2.5 hours
-O12_MIN_WAIT_S = 7200     # 2 hours
+O12_BUDGET_S = 9000
+O12_MIN_WAIT_S = 7200
 O1_ADVANCE_LT = 30
-O3_BUDGET_S = 86400       # 24 hours
+O2_ADVANCE_LT = 15
+O3_BUDGET_S = 86400
 O12_THREADS = 2
 DEFAULT_JOBS = 22
 RESERVE_VCPUS = 4
+STAGE_ORDER = ("o1", "o2", "o3")
 
 
 def log(message):
@@ -130,8 +133,42 @@ def prepare_jobs(campaign_dir, R, specs):
     return jobs
 
 
+def load_jobs_from_campaign(campaign_dir):
+    """Rebuild job list from a previous run's selected_lcs.json / job dirs."""
+    selected_path = os.path.join(campaign_dir, "selected_lcs.json")
+    jobs_root = os.path.join(campaign_dir, "jobs")
+    if not os.path.exists(selected_path):
+        raise SystemExit(
+            "cannot resume: missing %s (start a fresh campaign first)"
+            % selected_path
+        )
+
+    selected = json.load(open(selected_path))
+    jobs = []
+    for index, spec in enumerate(selected):
+        job_id = spec.get("job_id", "lc%d" % index)
+        job_dir = os.path.join(jobs_root, job_id)
+        spec_path = os.path.join(job_dir, "spec.json")
+        if not os.path.exists(spec_path):
+            raise SystemExit("cannot resume: missing %s" % spec_path)
+        jobs.append({
+            "job_id": job_id,
+            "job_dir": job_dir,
+            "spec_path": spec_path,
+            "spec": json.load(open(spec_path)),
+        })
+    return jobs
+
+
+def stage_result_path(job, stage):
+    return os.path.join(job["job_dir"], "%s_result.json" % stage)
+
+
+def has_stage_result(job, stage):
+    return os.path.exists(stage_result_path(job, stage))
+
+
 def launch_stage(jobs, stage, budget, min_wait, keep_last, threads_by_job):
-    """Launch one stage for each job; threads_by_job maps job_id -> thread count."""
     processes = []
     worker = os.path.join(HERE, "scripts", "run_staged_job.py")
 
@@ -163,7 +200,6 @@ def launch_stage(jobs, stage, budget, min_wait, keep_last, threads_by_job):
             stdout=handle,
             stderr=subprocess.STDOUT,
         )
-        # Parent no longer needs the handle; child keeps the fd.
         handle.close()
         processes.append((job, proc, log_path))
     return processes
@@ -175,7 +211,9 @@ def wait_processes(processes, campaign_dir, stage, poll_seconds):
         write_campaign_status(
             campaign_dir,
             phase="stage_%s" % stage,
-            jobs_running=[job["job_id"] for job, proc, _ in alive if proc.poll() is None],
+            jobs_running=[
+                job["job_id"] for job, proc, _ in alive if proc.poll() is None
+            ],
         )
         still = []
         for job, proc, log_path in alive:
@@ -193,7 +231,7 @@ def wait_processes(processes, campaign_dir, stage, poll_seconds):
 
 
 def load_stage_result(job, stage):
-    path = os.path.join(job["job_dir"], "%s_result.json" % stage)
+    path = stage_result_path(job, stage)
     if not os.path.exists(path):
         return None
     return json.load(open(path))
@@ -216,8 +254,8 @@ def summarize_stage(campaign_dir, jobs, stage):
     return rows
 
 
-def o3_thread_allocation(job_ids, reserve_vcpus):
-    """Give every surviving O3 search as many threads as possible, equally."""
+def allocate_threads(job_ids, reserve_vcpus, label):
+    """Split usable vCPUs evenly so each search gets as many threads as possible."""
     cpus = os.cpu_count() or 4
     usable = max(1, cpus - reserve_vcpus)
     n = max(1, len(job_ids))
@@ -225,13 +263,30 @@ def o3_thread_allocation(job_ids, reserve_vcpus):
     rem = usable - base * n
     allocation = {}
     for index, job_id in enumerate(job_ids):
-        # Spread leftover cores one-by-one.
         allocation[job_id] = base + (1 if index < rem else 0)
     log(
-        "O3 thread allocation: cpus=%d reserve=%d usable=%d jobs=%d -> %s"
-        % (cpus, reserve_vcpus, usable, n, allocation)
+        "%s thread allocation: cpus=%d reserve=%d usable=%d jobs=%d -> %s"
+        % (label, cpus, reserve_vcpus, usable, n, allocation)
     )
     return allocation
+
+
+def filter_advance(jobs, rows, threshold, stage_label):
+    advanced = []
+    for job, row in zip(jobs, rows):
+        optimum = row.get("optimum")
+        if row.get("found") and optimum is not None and optimum < threshold:
+            advanced.append(job)
+            log(
+                "%s advance %s optimum=%s (< %d)"
+                % (stage_label, job["job_id"], optimum, threshold)
+            )
+        else:
+            log(
+                "%s drop %s found=%s optimum=%s"
+                % (stage_label, job["job_id"], row.get("found"), optimum)
+            )
+    return advanced
 
 
 def main():
@@ -243,9 +298,16 @@ def main():
     parser.add_argument("--o12-budget", type=int, default=O12_BUDGET_S)
     parser.add_argument("--o12-min-wait", type=int, default=O12_MIN_WAIT_S)
     parser.add_argument("--o1-advance-lt", type=int, default=O1_ADVANCE_LT)
+    parser.add_argument("--o2-advance-lt", type=int, default=O2_ADVANCE_LT)
     parser.add_argument("--o3-budget", type=int, default=O3_BUDGET_S)
     parser.add_argument("--poll-seconds", type=int, default=300)
     parser.add_argument("--min-span", type=int, default=9)
+    parser.add_argument(
+        "--start-from",
+        choices=STAGE_ORDER,
+        default="o1",
+        help="skip earlier stages and reuse their on-disk results",
+    )
     parser.add_argument(
         "--campaign-dir",
         default="",
@@ -259,30 +321,37 @@ def main():
         "staged_R%d" % args.R,
     )
     os.makedirs(campaign_dir, exist_ok=True)
+    start_from = args.start_from
 
     write_campaign_status(
         campaign_dir,
         phase="starting",
         R=args.R,
         jobs=args.jobs,
+        start_from=start_from,
         o12_threads=args.o12_threads,
         o12_budget=args.o12_budget,
         o12_min_wait=args.o12_min_wait,
         o1_advance_lt=args.o1_advance_lt,
+        o2_advance_lt=args.o2_advance_lt,
         o3_budget=args.o3_budget,
         started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
-    lc_json = run_lc_search(args.R, campaign_dir, args.o12_threads)
-    specs = ranked_specs(lc_json, min_span=args.min_span)[: args.jobs]
-    if not specs:
-        raise SystemExit("no feasible LCs found")
+    if start_from == "o1":
+        lc_json = run_lc_search(args.R, campaign_dir, args.o12_threads)
+        specs = ranked_specs(lc_json, min_span=args.min_span)[: args.jobs]
+        if not specs:
+            raise SystemExit("no feasible LCs found")
+        jobs = prepare_jobs(campaign_dir, args.R, specs)
+        write_json(
+            os.path.join(campaign_dir, "selected_lcs.json"),
+            [job["spec"] for job in jobs],
+        )
+    else:
+        log("resuming from %s using existing campaign artifacts" % start_from)
+        jobs = load_jobs_from_campaign(campaign_dir)
 
-    jobs = prepare_jobs(campaign_dir, args.R, specs)
-    write_json(
-        os.path.join(campaign_dir, "selected_lcs.json"),
-        [job["spec"] for job in jobs],
-    )
     for job in jobs:
         log(
             "selected %s start=%s span=%s active=%s"
@@ -295,34 +364,32 @@ def main():
         )
 
     # ---- O1 ----
-    write_campaign_status(campaign_dir, phase="o1", n_jobs=len(jobs))
-    threads = {job["job_id"]: args.o12_threads for job in jobs}
-    procs = launch_stage(
-        jobs,
-        "o1",
-        budget=args.o12_budget,
-        min_wait=args.o12_min_wait,
-        keep_last=3,
-        threads_by_job=threads,
-    )
-    wait_processes(procs, campaign_dir, "o1", args.poll_seconds)
-    o1_rows = summarize_stage(campaign_dir, jobs, "o1")
-
-    o2_jobs = []
-    for job, row in zip(jobs, o1_rows):
-        optimum = row.get("optimum")
-        if row.get("found") and optimum is not None and optimum < args.o1_advance_lt:
-            o2_jobs.append(job)
-            log(
-                "O1 advance %s optimum=%s (< %d)"
-                % (job["job_id"], optimum, args.o1_advance_lt)
+    if start_from == "o1":
+        pending = [job for job in jobs if not has_stage_result(job, "o1")]
+        done = [job for job in jobs if has_stage_result(job, "o1")]
+        if done:
+            log("reusing %d existing O1 results; launching %d remaining" % (
+                len(done),
+                len(pending),
+            ))
+        if pending:
+            write_campaign_status(campaign_dir, phase="o1", n_jobs=len(pending))
+            threads = {job["job_id"]: args.o12_threads for job in pending}
+            procs = launch_stage(
+                pending,
+                "o1",
+                budget=args.o12_budget,
+                min_wait=args.o12_min_wait,
+                keep_last=3,
+                threads_by_job=threads,
             )
-        else:
-            log(
-                "O1 drop %s found=%s optimum=%s"
-                % (job["job_id"], row.get("found"), optimum)
-            )
+            wait_processes(procs, campaign_dir, "o1", args.poll_seconds)
+        o1_rows = summarize_stage(campaign_dir, jobs, "o1")
+    else:
+        log("skipping O1 launch (--start-from=%s)" % start_from)
+        o1_rows = summarize_stage(campaign_dir, jobs, "o1")
 
+    o2_jobs = filter_advance(jobs, o1_rows, args.o1_advance_lt, "O1")
     write_campaign_status(
         campaign_dir,
         phase="o1_done",
@@ -335,27 +402,41 @@ def main():
         return 0
 
     # ---- O2 ----
-    write_campaign_status(campaign_dir, phase="o2", n_jobs=len(o2_jobs))
-    threads = {job["job_id"]: args.o12_threads for job in o2_jobs}
-    procs = launch_stage(
-        o2_jobs,
-        "o2",
-        budget=args.o12_budget,
-        min_wait=args.o12_min_wait,
-        keep_last=3,
-        threads_by_job=threads,
-    )
-    wait_processes(procs, campaign_dir, "o2", args.poll_seconds)
-    o2_rows = summarize_stage(campaign_dir, o2_jobs, "o2")
+    if start_from in ("o1", "o2"):
+        pending = [job for job in o2_jobs if not has_stage_result(job, "o2")]
+        done = [job for job in o2_jobs if has_stage_result(job, "o2")]
+        if done and start_from == "o2":
+            log("reusing %d existing O2 results; launching %d remaining" % (
+                len(done),
+                len(pending),
+            ))
+        if pending:
+            allocation = allocate_threads(
+                [job["job_id"] for job in pending],
+                args.reserve_vcpus,
+                "O2",
+            )
+            write_campaign_status(
+                campaign_dir,
+                phase="o2",
+                n_jobs=len(pending),
+                o2_threads=allocation,
+            )
+            procs = launch_stage(
+                pending,
+                "o2",
+                budget=args.o12_budget,
+                min_wait=args.o12_min_wait,
+                keep_last=3,
+                threads_by_job=allocation,
+            )
+            wait_processes(procs, campaign_dir, "o2", args.poll_seconds)
+        o2_rows = summarize_stage(campaign_dir, o2_jobs, "o2")
+    else:
+        log("skipping O2 launch (--start-from=%s)" % start_from)
+        o2_rows = summarize_stage(campaign_dir, o2_jobs, "o2")
 
-    o3_jobs = []
-    for job, row in zip(o2_jobs, o2_rows):
-        if row.get("found") and row.get("optimum") is not None:
-            o3_jobs.append(job)
-            log("O2 advance %s optimum=%s" % (job["job_id"], row.get("optimum")))
-        else:
-            log("O2 drop %s found=%s" % (job["job_id"], row.get("found")))
-
+    o3_jobs = filter_advance(o2_jobs, o2_rows, args.o2_advance_lt, "O2")
     write_campaign_status(
         campaign_dir,
         phase="o2_done",
@@ -368,25 +449,30 @@ def main():
         return 0
 
     # ---- O3 ----
-    allocation = o3_thread_allocation(
-        [job["job_id"] for job in o3_jobs],
-        args.reserve_vcpus,
-    )
-    write_campaign_status(
-        campaign_dir,
-        phase="o3",
-        n_jobs=len(o3_jobs),
-        o3_threads=allocation,
-    )
-    procs = launch_stage(
-        o3_jobs,
-        "o3",
-        budget=args.o3_budget,
-        min_wait=0,
-        keep_last=1,
-        threads_by_job=allocation,
-    )
-    wait_processes(procs, campaign_dir, "o3", args.poll_seconds)
+    pending = [job for job in o3_jobs if not has_stage_result(job, "o3")]
+    if pending:
+        allocation = allocate_threads(
+            [job["job_id"] for job in pending],
+            args.reserve_vcpus,
+            "O3",
+        )
+        write_campaign_status(
+            campaign_dir,
+            phase="o3",
+            n_jobs=len(pending),
+            o3_threads=allocation,
+        )
+        procs = launch_stage(
+            pending,
+            "o3",
+            budget=args.o3_budget,
+            min_wait=0,
+            keep_last=1,
+            threads_by_job=allocation,
+        )
+        wait_processes(procs, campaign_dir, "o3", args.poll_seconds)
+    else:
+        log("all O3 results already present; nothing to launch")
     summarize_stage(campaign_dir, o3_jobs, "o3")
 
     write_campaign_status(
