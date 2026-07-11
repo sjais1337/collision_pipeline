@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # EC2 full-capacity smoke test: LC search + max parallel DC/guided-pair jobs.
 #
+# By default this script DETACHES itself so it keeps running after SSH logout.
+# Use --foreground only for interactive debugging in a tmux/screen session.
+#
 # Defaults target a 48-vCPU / 96GB instance:
 #   - 2 CryptoMiniSat threads per job
 #   - 4 vCPUs reserved for OS/controller
@@ -21,21 +24,48 @@ GUIDED_TIMEOUT="${GUIDED_TIMEOUT:-14400}"
 POLL_SECONDS="${POLL_SECONDS:-300}"
 CAMPAIGN_DIR="${CAMPAIGN_DIR:-$ROOT/campaigns/ec2_smoke_R${R}}"
 
+FOREGROUND=0
+if [[ "${1:-}" == "--foreground" ]]; then
+  FOREGROUND=1
+  shift
+fi
+
+mkdir -p "$CAMPAIGN_DIR"
+LOG="$CAMPAIGN_DIR/smoke_test.log"
+PID_FILE="$CAMPAIGN_DIR/smoke_test.pid"
+
+if [[ "$FOREGROUND" -eq 0 && -z "${SMOKE_TEST_DETACHED:-}" ]]; then
+  export SMOKE_TEST_DETACHED=1
+  : >>"$LOG"
+  setsid nohup "$0" --foreground "$@" >>"$LOG" 2>&1 &
+  pid=$!
+  echo "$pid" >"$PID_FILE"
+  echo "Started detached smoke test (survives SSH logout)."
+  echo "  PID:         $pid"
+  echo "  Log:         $LOG"
+  echo "  Campaign:    $CAMPAIGN_DIR"
+  echo "  Monitor:     tail -f $LOG"
+  echo "  Status:      python3 scripts/monitor_campaign.py $CAMPAIGN_DIR"
+  echo "  Stop:        kill \$(cat $PID_FILE)"
+  exit 0
+fi
+
 if ! command -v stp >/dev/null; then
   echo "stp not found; run scripts/ec2_setup.sh first" >&2
   exit 1
 fi
 
-mkdir -p "$(dirname "$CAMPAIGN_DIR")"
-LOG="$CAMPAIGN_DIR/smoke_test.log"
-mkdir -p "$CAMPAIGN_DIR"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] starting ec2_smoke_test (foreground/detached worker)" >>"$LOG"
+{
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] worker pid=$$ ppid=${PPID:-unknown}"
+  echo "  R=$R threads/job=$THREADS_PER_JOB reserve_vcpus=$RESERVE_VCPUS"
+  echo "  campaign_dir=$CAMPAIGN_DIR"
+  echo "  cpus=$(nproc)"
+} | tee -a "$LOG"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] starting ec2_smoke_test" | tee -a "$LOG"
-echo "  R=$R threads/job=$THREADS_PER_JOB reserve_vcpus=$RESERVE_VCPUS" | tee -a "$LOG"
-echo "  campaign_dir=$CAMPAIGN_DIR" | tee -a "$LOG"
-echo "  cpus=$(nproc)" | tee -a "$LOG"
+echo $$ >"$PID_FILE"
 
-exec python3 -u "$ROOT/scripts/run_campaign.py" \
+python3 -u "$ROOT/scripts/run_campaign.py" \
   --R "$R" \
   --jobs auto \
   --threads-per-job "$THREADS_PER_JOB" \
@@ -45,3 +75,5 @@ exec python3 -u "$ROOT/scripts/run_campaign.py" \
   --poll-seconds "$POLL_SECONDS" \
   --campaign-dir "$CAMPAIGN_DIR" \
   2>&1 | tee -a "$LOG"
+
+exit "${PIPESTATUS[0]}"
