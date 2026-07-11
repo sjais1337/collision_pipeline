@@ -1,5 +1,10 @@
-__pycache__
+__pycache__/
+*.py[cod]
+*.pem
+sha2.pem
 campaigns/
-playground
+playground/
 results_dc/_work/
 results_lc/_work/
+results_dc/*.json
+results_lc/lc_*.json

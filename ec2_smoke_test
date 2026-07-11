@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# EC2 full-capacity smoke test: LC search + max parallel DC/guided-pair jobs.
+#
+# Defaults target a 48-vCPU / 96GB instance:
+#   - 2 CryptoMiniSat threads per job
+#   - 4 vCPUs reserved for OS/controller
+#   - up to 22 parallel LC jobs (44 vCPUs)
+#
+# Override with environment variables, e.g.:
+#   RESERVE_VCPUS=6 THREADS_PER_JOB=2 ./ec2_smoke_test
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+R="${R:-32}"
+THREADS_PER_JOB="${THREADS_PER_JOB:-2}"
+RESERVE_VCPUS="${RESERVE_VCPUS:-4}"
+PER_CALL_TIMEOUT="${PER_CALL_TIMEOUT:-7200}"
+GUIDED_TIMEOUT="${GUIDED_TIMEOUT:-14400}"
+POLL_SECONDS="${POLL_SECONDS:-300}"
+CAMPAIGN_DIR="${CAMPAIGN_DIR:-$ROOT/campaigns/ec2_smoke_R${R}}"
+
+if ! command -v stp >/dev/null; then
+  echo "stp not found; run scripts/ec2_setup.sh first" >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "$CAMPAIGN_DIR")"
+LOG="$CAMPAIGN_DIR/smoke_test.log"
+mkdir -p "$CAMPAIGN_DIR"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] starting ec2_smoke_test" | tee -a "$LOG"
+echo "  R=$R threads/job=$THREADS_PER_JOB reserve_vcpus=$RESERVE_VCPUS" | tee -a "$LOG"
+echo "  campaign_dir=$CAMPAIGN_DIR" | tee -a "$LOG"
+echo "  cpus=$(nproc)" | tee -a "$LOG"
+
+exec python3 -u "$ROOT/scripts/run_campaign.py" \
+  --R "$R" \
+  --jobs auto \
+  --threads-per-job "$THREADS_PER_JOB" \
+  --reserve-vcpus "$RESERVE_VCPUS" \
+  --per-call-timeout "$PER_CALL_TIMEOUT" \
+  --guided-timeout "$GUIDED_TIMEOUT" \
+  --poll-seconds "$POLL_SECONDS" \
+  --campaign-dir "$CAMPAIGN_DIR" \
+  2>&1 | tee -a "$LOG"
