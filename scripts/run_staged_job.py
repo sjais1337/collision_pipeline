@@ -100,6 +100,18 @@ def main():
         default=0,
         help="max STP call timeout; 0 means use remaining budget",
     )
+    parser.add_argument(
+        "--bound-strategy",
+        choices=("linear", "binary"),
+        default="linear",
+        help="linear descent or binary search on the objective bound",
+    )
+    parser.add_argument(
+        "--start-bound",
+        type=int,
+        default=-1,
+        help="initial bound probe (-1 = strategy default; binary O3 uses 150)",
+    )
     args = parser.parse_args()
 
     job_dir = os.path.abspath(args.job_dir)
@@ -135,13 +147,28 @@ def main():
         threads=args.threads,
         budget=args.budget,
         keep_last=args.keep_last,
+        bound_strategy=args.bound_strategy,
+        start_bound=args.start_bound if args.start_bound >= 0 else None,
         active_words=active,
+        optimum=None,
+        best_value=None,
+        current_bound=None,
         started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
     log(
-        "job=%s stage=%s threads=%d budget=%ds keep_last=%d active=%s"
-        % (job_id, args.stage, args.threads, args.budget, args.keep_last, active)
+        "job=%s stage=%s threads=%d budget=%ds keep_last=%d "
+        "strategy=%s start_bound=%s active=%s"
+        % (
+            job_id,
+            args.stage,
+            args.threads,
+            args.budget,
+            args.keep_last,
+            args.bound_strategy,
+            args.start_bound if args.start_bound >= 0 else "default",
+            active,
+        )
     )
 
     cfg = dc_search.gen_config(R, start, start + span, active)
@@ -160,6 +187,7 @@ def main():
     per_call = args.per_call_timeout if args.per_call_timeout > 0 else args.budget
     phase_started = time.time()
 
+    start_bound = None if args.start_bound < 0 else args.start_bound
     value, best_out, retained_outs, carry, iterations, status = descend_retained(
         args.stage,
         terms,
@@ -170,6 +198,8 @@ def main():
         timeout=per_call,
         budget=args.budget,
         keep_last=args.keep_last,
+        strategy=args.bound_strategy,
+        start_bound=start_bound,
     )
 
     if args.min_wait > 0:

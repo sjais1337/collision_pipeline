@@ -23,6 +23,7 @@ O1_ADVANCE_LT="${O1_ADVANCE_LT:-30}"
 O2_ADVANCE_LT="${O2_ADVANCE_LT:-15}"
 O2_MAX_JOBS="${O2_MAX_JOBS:-8}"
 O3_BUDGET="${O3_BUDGET:-86400}"
+O3_START_BOUND="${O3_START_BOUND:-150}"
 POLL_SECONDS="${POLL_SECONDS:-300}"
 START_FROM="${START_FROM:-o1}"
 CAMPAIGN_DIR="${CAMPAIGN_DIR:-$ROOT/campaigns/staged_R${R}}"
@@ -64,7 +65,7 @@ fi
   echo "  R=$R jobs=$JOBS o12_threads=$O12_THREADS reserve=$RESERVE_VCPUS"
   echo "  o12_budget=$O12_BUDGET o12_min_wait=$O12_MIN_WAIT"
   echo "  o1_lt=$O1_ADVANCE_LT o2_lt=$O2_ADVANCE_LT o2_max=$O2_MAX_JOBS start_from=$START_FROM"
-  echo "  o3_budget=$O3_BUDGET campaign_dir=$CAMPAIGN_DIR cpus=$(nproc)"
+  echo "  o3_budget=$O3_BUDGET o3_start_bound=$O3_START_BOUND campaign_dir=$CAMPAIGN_DIR cpus=$(nproc)"
 } | tee -a "$LOG"
 
 echo $$ >"$PID_FILE"
@@ -80,6 +81,7 @@ python3 -u "$ROOT/scripts/run_staged_campaign.py" \
   --o2-advance-lt "$O2_ADVANCE_LT" \
   --o2-max-jobs "$O2_MAX_JOBS" \
   --o3-budget "$O3_BUDGET" \
+  --o3-start-bound "$O3_START_BOUND" \
   --poll-seconds "$POLL_SECONDS" \
   --start-from "$START_FROM" \
   --campaign-dir "$CAMPAIGN_DIR" \

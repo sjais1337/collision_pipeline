@@ -170,7 +170,16 @@ def has_stage_result(job, stage):
     return os.path.exists(stage_result_path(job, stage))
 
 
-def launch_stage(jobs, stage, budget, min_wait, keep_last, threads_by_job):
+def launch_stage(
+    jobs,
+    stage,
+    budget,
+    min_wait,
+    keep_last,
+    threads_by_job,
+    bound_strategy="linear",
+    start_bound=None,
+):
     processes = []
     worker = os.path.join(HERE, "scripts", "run_staged_job.py")
 
@@ -189,10 +198,21 @@ def launch_stage(jobs, stage, budget, min_wait, keep_last, threads_by_job):
             "--min-wait", str(min_wait),
             "--keep-last", str(keep_last),
             "--threads", str(threads),
+            "--bound-strategy", bound_strategy,
         ]
+        if start_bound is not None:
+            cmd += ["--start-bound", str(start_bound)]
         log(
-            "launch %s stage=%s threads=%d budget=%ds keep=%d"
-            % (job_id, stage, threads, budget, keep_last)
+            "launch %s stage=%s threads=%d budget=%ds keep=%d strategy=%s start_bound=%s"
+            % (
+                job_id,
+                stage,
+                threads,
+                budget,
+                keep_last,
+                bound_strategy,
+                start_bound if start_bound is not None else "default",
+            )
         )
         handle = open(log_path, "a")
         proc = subprocess.Popen(
@@ -327,6 +347,12 @@ def main():
         help="among O1 survivors, keep only the best K (lowest O1) for O2",
     )
     parser.add_argument("--o3-budget", type=int, default=O3_BUDGET_S)
+    parser.add_argument(
+        "--o3-start-bound",
+        type=int,
+        default=150,
+        help="O3 binary-search initial probe (default 150)",
+    )
     parser.add_argument("--poll-seconds", type=int, default=300)
     parser.add_argument("--min-span", type=int, default=9)
     parser.add_argument(
@@ -363,6 +389,7 @@ def main():
         o2_advance_lt=args.o2_advance_lt,
         o2_max_jobs=args.o2_max_jobs,
         o3_budget=args.o3_budget,
+        o3_start_bound=args.o3_start_bound,
         started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
@@ -483,6 +510,7 @@ def main():
         return 0
 
     # ---- O3 ----
+    # Clear incomplete O3 results so a restart actually relaunches.
     pending = [job for job in o3_jobs if not has_stage_result(job, "o3")]
     if pending:
         allocation = allocate_threads(
@@ -495,6 +523,8 @@ def main():
             phase="o3",
             n_jobs=len(pending),
             o3_threads=allocation,
+            o3_bound_strategy="binary",
+            o3_start_bound=args.o3_start_bound,
         )
         procs = launch_stage(
             pending,
@@ -503,6 +533,8 @@ def main():
             min_wait=0,
             keep_last=1,
             threads_by_job=allocation,
+            bound_strategy="binary",
+            start_bound=args.o3_start_bound,
         )
         wait_processes(procs, campaign_dir, "o3", args.poll_seconds)
     else:
