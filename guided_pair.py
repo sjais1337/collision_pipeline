@@ -40,9 +40,33 @@ from verify_collision import compression_trace
 
 def log(message):
     print(
-        "[%s] %s" % (time.strftime("%H:%M:%S"), message),
+        "[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message),
         flush=True,
     )
+
+
+def _update_status(**fields):
+    status_file = os.environ.get("SHA2_STATUS_FILE")
+    if not status_file:
+        return
+
+    payload = {}
+    if os.path.exists(status_file):
+        try:
+            with open(status_file) as handle:
+                payload = json.load(handle)
+        except (IOError, ValueError):
+            payload = {}
+
+    payload.update(fields)
+    payload["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    payload["pid"] = os.getpid()
+    os.makedirs(os.path.dirname(status_file), exist_ok=True)
+
+    temp_path = status_file + ".tmp"
+    with open(temp_path, "w") as handle:
+        json.dump(payload, handle, indent=2)
+    os.replace(temp_path, status_file)
 
 
 def signed_relation_matches(
@@ -336,11 +360,23 @@ def main():
 
     fixed = get_fixed_differences(args.dc_out)
     body, _ = build_guided_cvc(args.rounds, fixed)
-    work = os.path.join(HERE, "results_dc", "_work")
+    work = os.environ.get(
+        "SHA2_WORK_DIR",
+        os.path.join(HERE, "results_dc", "_work"),
+    )
     os.makedirs(work, exist_ok=True)
-    cvc = os.path.join(work, "guided_R%d.cvc" % args.rounds)
+    job_tag = os.environ.get("SHA2_JOB_TAG", "R%d" % args.rounds)
+    cvc = os.path.join(work, "guided_%s.cvc" % job_tag)
     with open(cvc, "w") as output:
         output.write(body + "\nQUERY FALSE;\nCOUNTEREXAMPLE;")
+    _update_status(
+        phase="guided_pair",
+        dc_out=args.dc_out,
+        rounds=args.rounds,
+        timeout=args.timeout,
+        threads=args.threads,
+        work_dir=work,
+    )
     log(
         "exact signed-DC model built for R=%d; "
         "solving (timeout %ds, %s threads)..."
@@ -360,6 +396,7 @@ def main():
         ).decode()
     except subprocess.TimeoutExpired:
         log("guided solve TIMEOUT after %.0fs" % (time.time() - started))
+        _update_status(phase="guided_pair_timeout")
         return 2
     elapsed = time.time() - started
 
@@ -423,13 +460,22 @@ def main():
             j for j in range(16) if wM[j] != wP[j]
         ],
     }
-    result_file = os.path.join(
-        HERE,
-        "results_dc",
-        "collision_R%d_oneLC.json" % args.rounds,
-    )
+    result_file = os.environ.get("SHA2_RESULT_FILE")
+    if not result_file:
+        result_file = os.path.join(
+            HERE,
+            "results_dc",
+            "collision_%s.json" % job_tag,
+        )
     with open(result_file, "w") as output:
         json.dump(rec, output, indent=2)
+    _update_status(
+        phase="done" if verified else "done_unverified",
+        verified=verified,
+        collision_verified=collides,
+        signed_dc_verified=conforms,
+        result_file=result_file,
+    )
     if verified:
         log("*** VERIFIED SFS COLLIDING PAIR FOR THE SIGNED DC ***")
         log("CV_in = " + " ".join(rec["cv_in_hex"]))

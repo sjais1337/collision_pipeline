@@ -7,10 +7,14 @@ import os
 import subprocess
 import json
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS_LC = os.path.join(HERE, "results_lc")
-WORK = os.path.join(RESULTS_LC, "_work")
+WORK = os.environ.get(
+    "SHA2_WORK_DIR",
+    os.path.join(RESULTS_LC, "_work"),
+)
 os.makedirs(WORK, exist_ok=True)
 
 # The 27 valid word-level (W[i-2],W[i-7],W[i-15],W[i-16],W[i],ConditionNum) transitions.
@@ -21,6 +25,13 @@ CONSTRAINTS_UPDATE = ['000000', '000110', '001010', '001101', '001110', '010010'
                       '111010', '111101', '111110']
 
 THREADS = os.environ.get("SHA2_THREADS", str(os.cpu_count() or 4))
+
+
+def log(message):
+    print(
+        "[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message),
+        flush=True,
+    )
 
 # just a utility
 def handle(s):
@@ -116,6 +127,10 @@ def solve_config(start_step, spans_step, message_bound):
     best = None
 
     while True:
+        log(
+            "LC solve R=%d start=%d span=%d active_bound=%d"
+            % (message_bound, start_step, spans_step, active)
+        )
         with open(cvc, "w") as f:
             f.write(declare)
             f.write(constraints)
@@ -198,7 +213,7 @@ def search_round(R, span_lo=6, span_hi=None, start_lo=4):
                 }
                 
                 candidates.append(cand)
-                print("  R=%d start=%d span=%d -> active=%s cond=%d" % (
+                log("  R=%d start=%d span=%d -> active=%s cond=%d" % (
                     R, start, span, res["active_words"], res["cond_total"]))
 
     if not candidates:
@@ -223,12 +238,12 @@ def search_round(R, span_lo=6, span_hi=None, start_lo=4):
 def run_for(R):
     os.makedirs(RESULTS_LC, exist_ok=True)
 
-    print("=== Local-collision search for R=%d ===" % R)
+    log("=== Local-collision search for R=%d ===" % R)
 
     ranked = search_round(R)
 
     if not ranked:
-        print("  no local collision found for R=%d" % R)
+        log("  no local collision found for R=%d" % R)
         return None
 
     # chooses the best local collision, saves separately
@@ -240,7 +255,7 @@ def run_for(R):
     with open(out, "w") as f:
         json.dump({"best": best, "alternates": ranked[1:30]}, f, indent=2)
 
-    print("  BEST R=%d: start=%d span=%d active=%s cond=%d (%d found) -> %s" % (
+    log("  BEST R=%d: start=%d span=%d active=%s cond=%d (%d found) -> %s" % (
         R, 
         best["start_step"], 
         best["span"], 

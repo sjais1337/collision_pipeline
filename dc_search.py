@@ -25,11 +25,49 @@ from unit_function_256 import (  # noqa: E402
 )
 
 RESULTS_DC = os.path.join(HERE, "results_dc")
-WORK = os.path.join(RESULTS_DC, "_work")
+
+
+def work_dir():
+    return os.environ.get(
+        "SHA2_WORK_DIR",
+        os.path.join(RESULTS_DC, "_work"),
+    )
+STATUS_FILE = os.environ.get("SHA2_STATUS_FILE")
 
 BLOCK = 32
 THREADS = os.environ.get("SHA2_THREADS", str(os.cpu_count() or 4))
 QUERY = "\nQUERY FALSE;\nCOUNTEREXAMPLE;"
+
+
+def log(message):
+    print(
+        "[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message),
+        flush=True,
+    )
+
+
+def _update_status(**fields):
+    """Write a heartbeat/status snapshot when SHA2_STATUS_FILE is set."""
+    if not STATUS_FILE:
+        return
+
+    payload = {}
+    if os.path.exists(STATUS_FILE):
+        try:
+            with open(STATUS_FILE) as status_file:
+                payload = json.load(status_file)
+        except (IOError, ValueError):
+            payload = {}
+
+    payload.update(fields)
+    payload["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    payload["pid"] = os.getpid()
+    os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+
+    temp_path = STATUS_FILE + ".tmp"
+    with open(temp_path, "w") as status_file:
+        json.dump(payload, status_file, indent=2)
+    os.replace(temp_path, STATUS_FILE)
 
 
 class DCModel:
@@ -356,6 +394,11 @@ def _obj_def(name, terms, width=10):
 
 def _run_stp(cvc, timeout):
     command = ["stp", cvc, "--cryptominisat", "--threads", THREADS]
+    log("STP start threads=%s timeout=%ds file=%s" % (
+        THREADS,
+        timeout,
+        os.path.basename(cvc),
+    ))
     try:
         output = subprocess.check_output(
             command,
@@ -364,8 +407,13 @@ def _run_stp(cvc, timeout):
         )
         return output.decode(), None
     except subprocess.TimeoutExpired:
+        log("STP timeout file=%s" % os.path.basename(cvc))
         return None, "timeout"
     except subprocess.CalledProcessError as error:
+        log("STP error file=%s: %s" % (
+            os.path.basename(cvc),
+            error.output.decode()[:120],
+        ))
         return None, "error:" + error.output.decode()[:150]
 
 
@@ -383,11 +431,11 @@ def _write_solver_output(path, output):
 def descend_stage(name, terms, variable, base_constr, carried, tag, timeout,
                   query, width=10, budget=None):
     """Minimize one objective and return its best witness."""
-    os.makedirs(WORK, exist_ok=True)
+    os.makedirs(work_dir(), exist_ok=True)
 
     iterations = []
     objective = _obj_def(name, terms, width)
-    cvc = os.path.join(WORK, "dc_%s_%s.cvc" % (tag, name))
+    cvc = os.path.join(work_dir(), "dc_%s_%s.cvc" % (tag, name))
 
     if objective is None:
         _write_cvc(cvc, variable, base_constr, carried, query)
@@ -413,7 +461,7 @@ def descend_stage(name, terms, variable, base_constr, carried, tag, timeout,
             }
             return None, None, "", [event], "infeasible"
 
-        out_file = os.path.join(WORK, "dc_%s_%s.out" % (tag, name))
+        out_file = os.path.join(work_dir(), "dc_%s_%s.out" % (tag, name))
         _write_solver_output(out_file, output)
         event = {
             "stage": name,
@@ -449,6 +497,15 @@ def descend_stage(name, terms, variable, base_constr, carried, tag, timeout,
             query,
         )
 
+        _update_status(
+            phase="dc_search",
+            current_stage=name,
+            current_bound=bound,
+            best_value=best_value,
+            tag=tag,
+        )
+        log("stage=%s bound=%d tag=%s" % (name, bound, tag))
+
         started = time.time()
         output, error = _run_stp(cvc, timeout)
         elapsed = time.time() - started
@@ -461,6 +518,12 @@ def descend_stage(name, terms, variable, base_constr, carried, tag, timeout,
                 "dt": round(elapsed, 2),
                 "result": result.upper(),
             })
+            log("stage=%s bound=%d result=%s dt=%.1fs" % (
+                name,
+                bound,
+                result.upper(),
+                elapsed,
+            ))
             status = "ok" if best_out is not None else result
             break
 
@@ -471,11 +534,16 @@ def descend_stage(name, terms, variable, base_constr, carried, tag, timeout,
                 "dt": round(elapsed, 2),
                 "result": "UNSAT",
             })
+            log("stage=%s bound=%d result=UNSAT dt=%.1fs" % (
+                name,
+                bound,
+                elapsed,
+            ))
             status = "ok" if best_out is not None else "infeasible"
             break
 
         out_file = os.path.join(
-            WORK,
+            work_dir(),
             "dc_%s_%s_%d.out" % (tag, name, bound),
         )
         _write_solver_output(out_file, output)
@@ -491,8 +559,22 @@ def descend_stage(name, terms, variable, base_constr, carried, tag, timeout,
             "dt": round(elapsed, 2),
             "result": "SAT",
         })
+        log("stage=%s bound=%d achieved=%s result=SAT dt=%.1fs" % (
+            name,
+            bound,
+            achieved,
+            elapsed,
+        ))
         best_value = achieved
         best_out = out_file
+        _update_status(
+            phase="dc_search",
+            current_stage=name,
+            current_bound=bound,
+            best_value=best_value,
+            best_out=best_out,
+            tag=tag,
+        )
 
         if achieved == 0:
             break
@@ -530,6 +612,29 @@ def _cascade_result(status, final_out, optima, iterations, message_bound):
 def solve_cascade(cfg, tag, timeout=600, o5_value=True, budget=None,
                   stop_after="o5"):
     """Run the O1-O5 lexicographic minimization cascade."""
+    log(
+        "cascade start tag=%s R=%s start=%s end=%s active=%s threads=%s work=%s"
+        % (
+            tag,
+            cfg["message_bound"],
+            cfg["start_step"],
+            cfg["end_step"],
+            cfg["message_differential"],
+            THREADS,
+            work_dir(),
+        )
+    )
+    _update_status(
+        phase="dc_search",
+        tag=tag,
+        R=cfg["message_bound"],
+        start_step=cfg["start_step"],
+        end_step=cfg["end_step"],
+        active_words=cfg["message_differential"],
+        threads=THREADS,
+        work_dir=work_dir(),
+    )
+
     diff_model = DCModel(cfg)
     diff_variables, diff_constraints = diff_model.build()
     diff_declared = diff_model.declared_set()
@@ -636,13 +741,34 @@ def solve_cascade(cfg, tag, timeout=600, o5_value=True, budget=None,
     if final_out is not None and status == "ok":
         status = "minimized"
 
-    return _cascade_result(
+    result = _cascade_result(
         status if final_out else "no_solution",
         final_out,
         optima,
         all_iterations,
         cfg["message_bound"],
     )
+    log(
+        "cascade done tag=%s status=%s found=%s O3=%s total=%.1fs out=%s"
+        % (
+            tag,
+            result["status"],
+            result["found"],
+            result.get("min_conditions"),
+            result.get("total_time", 0),
+            result.get("out_file"),
+        )
+    )
+    _update_status(
+        phase="dc_search_done",
+        tag=tag,
+        cascade_status=result["status"],
+        found=result["found"],
+        stage_optima=result.get("stage_optima"),
+        out_file=result.get("out_file"),
+        total_time=result.get("total_time"),
+    )
+    return result
 
 
 def _sat_out_files(result, tag):
