@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Detached launcher for the staged O1 -> O2 -> O3 campaign.
+#
+# This supersedes ec2_smoke_test.sh for the long R=32 EC2 run.
+# Defaults: 22 LCs, 2 threads for O1/O2 (2.5h + 2h min-wait), O3 gets
+# remaining cores split across survivors for 24h. Stops after O3.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+R="${R:-32}"
+JOBS="${JOBS:-22}"
+O12_THREADS="${O12_THREADS:-2}"
+RESERVE_VCPUS="${RESERVE_VCPUS:-4}"
+O12_BUDGET="${O12_BUDGET:-9000}"
+O12_MIN_WAIT="${O12_MIN_WAIT:-7200}"
+O1_ADVANCE_LT="${O1_ADVANCE_LT:-30}"
+O3_BUDGET="${O3_BUDGET:-86400}"
+POLL_SECONDS="${POLL_SECONDS:-300}"
+CAMPAIGN_DIR="${CAMPAIGN_DIR:-$ROOT/campaigns/staged_R${R}}"
+
+FOREGROUND=0
+if [[ "${1:-}" == "--foreground" ]]; then
+  FOREGROUND=1
+  shift
+fi
+
+mkdir -p "$CAMPAIGN_DIR"
+LOG="$CAMPAIGN_DIR/staged_campaign.log"
+PID_FILE="$CAMPAIGN_DIR/staged_campaign.pid"
+
+if [[ "$FOREGROUND" -eq 0 && -z "${STAGED_CAMPAIGN_DETACHED:-}" ]]; then
+  export STAGED_CAMPAIGN_DETACHED=1
+  : >>"$LOG"
+  setsid nohup "$0" --foreground "$@" >>"$LOG" 2>&1 &
+  pid=$!
+  echo "$pid" >"$PID_FILE"
+  echo "Started detached staged campaign (survives SSH logout)."
+  echo "  PID:       $pid"
+  echo "  Log:       $LOG"
+  echo "  Campaign:  $CAMPAIGN_DIR"
+  echo "  Monitor:   python3 scripts/monitor_campaign.py $CAMPAIGN_DIR"
+  echo "  Tail:      tail -f $LOG"
+  echo "  Stop:      kill \$(cat $PID_FILE)"
+  exit 0
+fi
+
+if ! command -v stp >/dev/null; then
+  echo "stp not found; run scripts/ec2_setup.sh first" >&2
+  exit 1
+fi
+
+{
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] staged campaign worker pid=$$"
+  echo "  R=$R jobs=$JOBS o12_threads=$O12_THREADS reserve=$RESERVE_VCPUS"
+  echo "  o12_budget=$O12_BUDGET o12_min_wait=$O12_MIN_WAIT o1_lt=$O1_ADVANCE_LT"
+  echo "  o3_budget=$O3_BUDGET campaign_dir=$CAMPAIGN_DIR cpus=$(nproc)"
+} | tee -a "$LOG"
+
+echo $$ >"$PID_FILE"
+
+python3 -u "$ROOT/scripts/run_staged_campaign.py" \
+  --R "$R" \
+  --jobs "$JOBS" \
+  --o12-threads "$O12_THREADS" \
+  --reserve-vcpus "$RESERVE_VCPUS" \
+  --o12-budget "$O12_BUDGET" \
+  --o12-min-wait "$O12_MIN_WAIT" \
+  --o1-advance-lt "$O1_ADVANCE_LT" \
+  --o3-budget "$O3_BUDGET" \
+  --poll-seconds "$POLL_SECONDS" \
+  --campaign-dir "$CAMPAIGN_DIR" \
+  2>&1 | tee -a "$LOG"
+
+exit "${PIPESTATUS[0]}"

@@ -282,4 +282,5 @@ PY
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log "Repo ready at $REPO_DIR"
-log "Run ./ec2_smoke_test.sh from the repo root to start the benchmark campaign."
+log "Run ./ec2_staged_campaign.sh from the repo root to start the staged O1->O3 campaign."
+log "(ec2_smoke_test.sh is retained but considered redundant for the long EC2 run.)"

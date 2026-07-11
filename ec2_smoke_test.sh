@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# REDUNDANT for the long R=32 EC2 campaign: use ./ec2_staged_campaign.sh instead
+# (staged O1->O2->O3 with retention / filtering). Kept for ad-hoc full-cascade runs.
+#
 # EC2 full-capacity smoke test: LC search + max parallel DC/guided-pair jobs.
 #
 # By default this script DETACHES itself so it keeps running after SSH logout.
