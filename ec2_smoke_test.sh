@@ -10,7 +10,7 @@
 #   - up to 22 parallel LC jobs (44 vCPUs)
 #
 # Override with environment variables, e.g.:
-#   RESERVE_VCPUS=6 THREADS_PER_JOB=2 ./ec2_smoke_test
+#   RESERVE_VCPUS=6 THREADS_PER_JOB=2 ./ec2_smoke_test.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,7 +55,7 @@ if ! command -v stp >/dev/null; then
   exit 1
 fi
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] starting ec2_smoke_test (foreground/detached worker)" >>"$LOG"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] starting ec2_smoke_test.sh (foreground/detached worker)" >>"$LOG"
 {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] worker pid=$$ ppid=${PPID:-unknown}"
   echo "  R=$R threads/job=$THREADS_PER_JOB reserve_vcpus=$RESERVE_VCPUS"

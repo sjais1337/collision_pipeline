@@ -58,4 +58,4 @@ PY
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log "Repo ready at $REPO_DIR"
-log "Run ./ec2_smoke_test from the repo root to start the benchmark campaign."
+log "Run ./ec2_smoke_test.sh from the repo root to start the benchmark campaign."
