@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a live summary for an R32 (or generic) campaign directory."""
+"""Print a live summary for a staged / R32 campaign directory."""
 
 import json
 import os
@@ -15,20 +15,27 @@ def load_json(path):
         return {}
 
 
-def job_line(job_dir):
+def job_line(job_dir, marker=""):
     status_path = os.path.join(job_dir, "status.json")
     status = load_json(status_path)
+    name = os.path.basename(job_dir)
     if not status:
-        return "  %s: (no status yet)" % os.path.basename(job_dir)
+        return "  %s%s: (no status yet)" % (marker, name)
 
     parts = [
-        os.path.basename(job_dir),
+        "%s%s" % (marker, name),
         "phase=%s" % status.get("phase", "?"),
     ]
     if status.get("current_stage"):
         parts.append("stage=%s" % status["current_stage"])
+    if status.get("optimum") is not None:
+        parts.append("optimum=%s" % status["optimum"])
+    elif status.get("best_value") is not None:
+        parts.append("best=%s" % status["best_value"])
     if status.get("current_bound") is not None:
         parts.append("bound=%s" % status["current_bound"])
+    if status.get("threads") is not None:
+        parts.append("threads=%s" % status["threads"])
     if status.get("stage_optima"):
         parts.append("O3=%s" % status["stage_optima"].get("o3"))
     if status.get("verified") is not None:
@@ -43,6 +50,7 @@ def main():
         "campaigns",
         "R32",
     )
+    show_all = "--all" in sys.argv[2:]
 
     campaign_status = load_json(os.path.join(campaign_dir, "status.json"))
     print("=== campaign %s ===" % campaign_dir)
@@ -51,21 +59,69 @@ def main():
         for key in (
             "phase",
             "R",
-            "lc_search_status",
-            "jobs_started",
+            "start_from",
+            "o1_advanced_count",
+            "o2_advanced_count",
+            "n_jobs",
             "started_at",
         ):
             if key in campaign_status:
                 print("%s: %s" % (key, campaign_status[key]))
+        if campaign_status.get("o1_advanced"):
+            print("o1_advanced: %s" % ", ".join(campaign_status["o1_advanced"]))
+        if campaign_status.get("o2_advanced"):
+            print("o2_advanced: %s" % ", ".join(campaign_status["o2_advanced"]))
+        if campaign_status.get("jobs_running"):
+            print("jobs_running: %s" % ", ".join(campaign_status["jobs_running"]))
+        if campaign_status.get("o2_threads"):
+            print("o2_threads: %s" % campaign_status["o2_threads"])
+        if campaign_status.get("o3_threads"):
+            print("o3_threads: %s" % campaign_status["o3_threads"])
 
+    active = set()
+    for key in ("jobs_running", "o1_advanced", "o2_advanced"):
+        for job_id in campaign_status.get(key) or []:
+            active.add(job_id)
+
+    # Fall back: jobs whose status was touched in the last 10 minutes.
+    now = time.time()
     jobs_root = os.path.join(campaign_dir, "jobs")
-    if os.path.isdir(jobs_root):
-        for name in sorted(os.listdir(jobs_root)):
-            job_dir = os.path.join(jobs_root, name)
-            if os.path.isdir(job_dir):
-                print(job_line(job_dir))
-    else:
+    if not os.path.isdir(jobs_root):
         print("  (no jobs directory yet)")
+        return
+
+    names = sorted(
+        name for name in os.listdir(jobs_root)
+        if os.path.isdir(os.path.join(jobs_root, name))
+    )
+
+    if not active:
+        for name in names:
+            status = load_json(os.path.join(jobs_root, name, "status.json"))
+            updated = status.get("updated_at")
+            if not updated:
+                continue
+            try:
+                stamp = time.mktime(time.strptime(updated, "%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                continue
+            if now - stamp < 600:
+                active.add(name)
+
+    print("--- active / selected (%d) ---" % len(active))
+    for name in names:
+        if name in active:
+            print(job_line(os.path.join(jobs_root, name)))
+
+    idle = [name for name in names if name not in active]
+    if idle:
+        print("--- idle / not in current stage (%d) ---" % len(idle))
+        if show_all:
+            for name in idle:
+                print(job_line(os.path.join(jobs_root, name), marker="(idle) "))
+        else:
+            print("  %s" % ", ".join(idle))
+            print("  (pass --all to show their last status; often stale)")
 
     lc_json = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
