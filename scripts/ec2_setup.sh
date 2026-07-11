@@ -33,9 +33,11 @@ $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
   cmake \
   ninja-build \
+  pkg-config \
   bison \
   flex \
   perl \
+  help2man \
   libboost-all-dev \
   libgmp-dev \
   zlib1g-dev
