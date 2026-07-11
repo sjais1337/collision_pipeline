@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Print a live summary for a staged / R32 campaign directory."""
+"""Print a live summary for a staged / R32 campaign directory.
+
+Per-job fields:
+  trying=N   — BVLE ceiling of the active / last-started STP call
+  best=N     — lowest SAT objective found in the CURRENT stage so far
+  optimum=N  — final answer (only when phase ends with *_done)
+"""
 
 import json
 import os
@@ -22,24 +28,41 @@ def job_line(job_dir, marker=""):
     if not status:
         return "  %s%s: (no status yet)" % (marker, name)
 
-    parts = [
-        "%s%s" % (marker, name),
-        "phase=%s" % status.get("phase", "?"),
-    ]
-    if status.get("current_stage"):
-        parts.append("stage=%s" % status["current_stage"])
-    if status.get("optimum") is not None:
-        parts.append("optimum=%s" % status["optimum"])
-    elif status.get("best_value") is not None:
-        parts.append("best=%s" % status["best_value"])
-    if status.get("current_bound") is not None:
-        parts.append("bound=%s" % status["current_bound"])
+    phase = status.get("phase", "?")
+    parts = ["%s%s" % (marker, name), "phase=%s" % phase]
+
+    strategy = status.get("strategy") or status.get("bound_strategy")
+    if strategy:
+        parts.append("strategy=%s" % strategy)
+    if status.get("binary_phase"):
+        parts.append("bin=%s" % status["binary_phase"])
+        if status.get("binary_lo") is not None and status.get("binary_hi") is not None:
+            parts.append("range=[%s,%s]" % (status["binary_lo"], status["binary_hi"]))
+
+    # Prefer explicit vocabulary; fall back to legacy keys.
+    trying = status.get("trying_bound")
+    if trying is None:
+        trying = status.get("current_bound")
+    best = status.get("best_found")
+    if best is None:
+        best = status.get("best_value")
+
+    done = phase.endswith("_done")
+    if done:
+        opt = status.get("optimum")
+        if opt is None:
+            opt = best
+        if opt is not None:
+            parts.append("optimum=%s" % opt)
+    else:
+        # While running: never show a stale prior-stage "optimum".
+        if trying is not None:
+            parts.append("trying=%s" % trying)
+        if best is not None:
+            parts.append("best=%s" % best)
+
     if status.get("threads") is not None:
         parts.append("threads=%s" % status["threads"])
-    if status.get("stage_optima"):
-        parts.append("O3=%s" % status["stage_optima"].get("o3"))
-    if status.get("verified") is not None:
-        parts.append("verified=%s" % status["verified"])
     parts.append("updated=%s" % status.get("updated_at", "?"))
     return "  " + " | ".join(parts)
 
@@ -63,6 +86,8 @@ def main():
             "o1_advanced_count",
             "o2_advanced_count",
             "n_jobs",
+            "o3_bound_strategy",
+            "o3_start_bound",
             "started_at",
         ):
             if key in campaign_status:
@@ -83,7 +108,6 @@ def main():
         for job_id in campaign_status.get(key) or []:
             active.add(job_id)
 
-    # Fall back: jobs whose status was touched in the last 10 minutes.
     now = time.time()
     jobs_root = os.path.join(campaign_dir, "jobs")
     if not os.path.isdir(jobs_root):
@@ -109,6 +133,7 @@ def main():
                 active.add(name)
 
     print("--- active / selected (%d) ---" % len(active))
+    print("  (trying=BVLE ceiling, best=lowest SAT this stage, optimum=final only)")
     for name in names:
         if name in active:
             print(job_line(os.path.join(jobs_root, name)))

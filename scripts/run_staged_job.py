@@ -25,9 +25,10 @@ def write_json(path, payload):
     os.replace(temp, path)
 
 
-def write_status(path, **fields):
+def write_status(path, replace=False, **fields):
+    """Update status.json. If replace=True, discard prior keys (new stage)."""
     payload = {}
-    if os.path.exists(path):
+    if not replace and os.path.exists(path):
         try:
             with open(path) as handle:
                 payload = json.load(handle)
@@ -139,8 +140,10 @@ def main():
     job_id = spec.get("job_id", os.path.basename(job_dir))
     tag = "%s_%s" % (spec.get("tag", job_id), args.stage)
 
+    # Fresh status for this stage — do not keep prior-stage optimum/bound.
     write_status(
         status_file,
+        replace=True,
         phase=args.stage,
         job_id=job_id,
         stage=args.stage,
@@ -150,9 +153,9 @@ def main():
         bound_strategy=args.bound_strategy,
         start_bound=args.start_bound if args.start_bound >= 0 else None,
         active_words=active,
+        trying_bound=None,
+        best_found=None,
         optimum=None,
-        best_value=None,
-        current_bound=None,
         started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
 
@@ -235,6 +238,8 @@ def main():
         stage=args.stage,
         stage_status=status,
         optimum=value,
+        best_found=value,
+        trying_bound=None,
         found=result["found"],
         best_out=best_out,
         retained_outs=retained_outs,
