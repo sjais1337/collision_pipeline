@@ -118,7 +118,7 @@ def descend_retained(
         )
 
         dc_search._update_status(
-            phase="dc_search",
+            phase=name,
             current_stage=name,
             current_bound=bound,
             best_value=best_value,
@@ -210,7 +210,7 @@ def descend_retained(
         best_value = achieved
         best_out = out_file
         dc_search._update_status(
-            phase="dc_search",
+            phase=name,
             current_stage=name,
             current_bound=bound,
             best_value=best_value,

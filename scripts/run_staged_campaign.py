@@ -3,9 +3,10 @@
 
 Phase plan (defaults target a 48-vCPU EC2 host):
   O1: up to 22 LCs x 2 threads, 2.5h budget, 2h min-wait, keep last 3.
-      Advance if O1 optimum < 30.
-  O2: survivors get equal max thread split, 2.5h / 2h-wait / keep-3.
-      Advance if O2 optimum < 15.
+      O1 is Hamming weight of the highest-index active message words.
+      Advance if O1 optimum < 30, then keep the best 8 (lowest O1) for O2.
+  O2: those 8 get equal max thread split (~4 on a 48-vCPU host), 2.5h / 2h-wait.
+      O2 is total message-difference Hamming weight H(dW). Advance if O2 < 15.
   O3: survivors get equal max thread split, 24h budget, keep best only.
 
 Resume with --start-from o2|o3 when prior stage result JSONs exist.
@@ -25,6 +26,7 @@ O12_BUDGET_S = 9000
 O12_MIN_WAIT_S = 7200
 O1_ADVANCE_LT = 30
 O2_ADVANCE_LT = 15
+O2_MAX_JOBS = 8          # among O1 survivors, keep the best K (lowest O1)
 O3_BUDGET_S = 86400
 O12_THREADS = 2
 DEFAULT_JOBS = 22
@@ -271,14 +273,15 @@ def allocate_threads(job_ids, reserve_vcpus, label):
     return allocation
 
 
-def filter_advance(jobs, rows, threshold, stage_label):
-    advanced = []
+def filter_advance(jobs, rows, threshold, stage_label, top_k=None):
+    """Keep jobs with optimum < threshold; optionally only the best ``top_k``."""
+    eligible = []
     for job, row in zip(jobs, rows):
         optimum = row.get("optimum")
         if row.get("found") and optimum is not None and optimum < threshold:
-            advanced.append(job)
+            eligible.append((optimum, job, row))
             log(
-                "%s advance %s optimum=%s (< %d)"
+                "%s eligible %s optimum=%s (< %d)"
                 % (stage_label, job["job_id"], optimum, threshold)
             )
         else:
@@ -286,6 +289,24 @@ def filter_advance(jobs, rows, threshold, stage_label):
                 "%s drop %s found=%s optimum=%s"
                 % (stage_label, job["job_id"], row.get("found"), optimum)
             )
+
+    eligible.sort(key=lambda item: (item[0], item[1]["job_id"]))
+    if top_k is not None and len(eligible) > top_k:
+        log(
+            "%s keeping best %d of %d eligible (lowest optima)"
+            % (stage_label, top_k, len(eligible))
+        )
+        for optimum, job, _ in eligible[top_k:]:
+            log(
+                "%s skip %s optimum=%s (outside top %d)"
+                % (stage_label, job["job_id"], optimum, top_k)
+            )
+        eligible = eligible[:top_k]
+
+    advanced = []
+    for optimum, job, _ in eligible:
+        advanced.append(job)
+        log("%s advance %s optimum=%s" % (stage_label, job["job_id"], optimum))
     return advanced
 
 
@@ -299,6 +320,12 @@ def main():
     parser.add_argument("--o12-min-wait", type=int, default=O12_MIN_WAIT_S)
     parser.add_argument("--o1-advance-lt", type=int, default=O1_ADVANCE_LT)
     parser.add_argument("--o2-advance-lt", type=int, default=O2_ADVANCE_LT)
+    parser.add_argument(
+        "--o2-max-jobs",
+        type=int,
+        default=O2_MAX_JOBS,
+        help="among O1 survivors, keep only the best K (lowest O1) for O2",
+    )
     parser.add_argument("--o3-budget", type=int, default=O3_BUDGET_S)
     parser.add_argument("--poll-seconds", type=int, default=300)
     parser.add_argument("--min-span", type=int, default=9)
@@ -334,6 +361,7 @@ def main():
         o12_min_wait=args.o12_min_wait,
         o1_advance_lt=args.o1_advance_lt,
         o2_advance_lt=args.o2_advance_lt,
+        o2_max_jobs=args.o2_max_jobs,
         o3_budget=args.o3_budget,
         started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
@@ -389,7 +417,13 @@ def main():
         log("skipping O1 launch (--start-from=%s)" % start_from)
         o1_rows = summarize_stage(campaign_dir, jobs, "o1")
 
-    o2_jobs = filter_advance(jobs, o1_rows, args.o1_advance_lt, "O1")
+    o2_jobs = filter_advance(
+        jobs,
+        o1_rows,
+        args.o1_advance_lt,
+        "O1",
+        top_k=args.o2_max_jobs,
+    )
     write_campaign_status(
         campaign_dir,
         phase="o1_done",
