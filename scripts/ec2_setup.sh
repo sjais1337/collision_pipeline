@@ -2,8 +2,8 @@
 # Install dependencies for the SHA-256 DC search pipeline on Ubuntu EC2.
 #
 # Ubuntu EC2 images often lack the stp / cryptominisat5 apt packages. This
-# script installs build deps via apt, then builds CryptoMiniSat + STP from
-# source when needed.
+# script installs build deps via apt, then builds CryptoMiniSat, MiniSat, and
+# STP from source when needed.
 set -euo pipefail
 
 log() {
@@ -63,6 +63,19 @@ stp_has_cryptominisat() {
   command -v stp >/dev/null && stp --help 2>&1 | grep -q cryptominisat
 }
 
+find_file() {
+  local name="$1"
+  shift
+  local candidate
+  for candidate in "$@"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 build_cryptominisat() {
   if pkg-config --exists cryptominisat5 2>/dev/null; then
     log "CryptoMiniSat already installed"
@@ -89,6 +102,39 @@ build_cryptominisat() {
   fi
 }
 
+build_minisat() {
+  # Prefer STP's maintained MiniSat fork over distro packages.
+  if [[ -f /usr/local/include/minisat/core/Solver.h ]] && \
+     { [[ -f /usr/local/lib/libminisat.so ]] || [[ -f /usr/local/lib/libminisat.a ]]; }; then
+    log "MiniSat already installed under /usr/local"
+    return 0
+  fi
+
+  log "Building STP's MiniSat fork from source ($NPROC cores)"
+  mkdir -p "$BUILD_ROOT"
+  if [[ ! -d "$BUILD_ROOT/minisat/.git" ]]; then
+    git clone --depth 1 https://github.com/stp/minisat.git \
+      "$BUILD_ROOT/minisat"
+  fi
+
+  # Wipe stale configure state from earlier failed builds.
+  rm -rf "$BUILD_ROOT/minisat/build"
+  cmake -S "$BUILD_ROOT/minisat" -B "$BUILD_ROOT/minisat/build" \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+  cmake --build "$BUILD_ROOT/minisat/build" -j "$NPROC"
+  $SUDO cmake --install "$BUILD_ROOT/minisat/build"
+  if command -v ldconfig >/dev/null; then
+    $SUDO ldconfig
+  fi
+
+  if [[ ! -f /usr/local/include/minisat/core/Solver.h ]]; then
+    echo "MiniSat headers missing after install" >&2
+    exit 1
+  fi
+}
+
 build_stp() {
   if stp_has_cryptominisat; then
     log "STP with CryptoMiniSat already available"
@@ -105,6 +151,7 @@ build_stp() {
   CMS_DIR=""
   for candidate in \
     /usr/local/lib/cmake/cryptominisat5 \
+    /usr/local/lib/x86_64-linux-gnu/cmake/cryptominisat5 \
     "$BUILD_ROOT/cryptominisat/build" \
     "$BUILD_ROOT/cryptominisat/build/lib/cmake/cryptominisat5"; do
     if [[ -f "$candidate/cryptominisat5Config.cmake" ]]; then
@@ -113,11 +160,29 @@ build_stp() {
     fi
   done
 
+  MINISAT_INCLUDE="/usr/local/include"
+  MINISAT_LIBDIR="/usr/local/lib"
+  if [[ ! -f "$MINISAT_INCLUDE/minisat/core/Solver.h" ]]; then
+    echo "MiniSat include path not found at $MINISAT_INCLUDE/minisat/core/Solver.h" >&2
+    exit 1
+  fi
+  if [[ ! -f "$MINISAT_LIBDIR/libminisat.so" && ! -f "$MINISAT_LIBDIR/libminisat.a" ]]; then
+    echo "MiniSat library not found under $MINISAT_LIBDIR" >&2
+    exit 1
+  fi
+
+  # Wipe stale STP configure state from earlier failed builds.
+  rm -rf "$BUILD_ROOT/stp/build"
+
   cmake_args=(
     -S "$BUILD_ROOT/stp"
     -B "$BUILD_ROOT/stp/build"
     -G Ninja
     -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    -Wno-dev
+    "-DMINISAT_INCLUDE_DIRS=$MINISAT_INCLUDE"
+    "-DMINISAT_LIBDIR=$MINISAT_LIBDIR"
   )
   if [[ -n "$CMS_DIR" ]]; then
     cmake_args+=("-Dcryptominisat5_DIR=$CMS_DIR")
@@ -136,6 +201,7 @@ if try_apt_stp && stp_has_cryptominisat; then
 else
   log "apt packages unavailable or missing CryptoMiniSat support; building from source"
   build_cryptominisat
+  build_minisat
   build_stp
 fi
 
