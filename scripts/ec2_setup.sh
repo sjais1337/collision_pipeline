@@ -42,6 +42,38 @@ $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libgmp-dev \
   zlib1g-dev
 
+ensure_local_lib_path() {
+  # Ensure /usr/local/lib is searched by the dynamic linker.
+  echo "/usr/local/lib" | $SUDO tee /etc/ld.so.conf.d/usr-local-lib.conf >/dev/null
+  if command -v ldconfig >/dev/null; then
+    $SUDO ldconfig
+  fi
+}
+
+install_runtime_libs_from_build() {
+  # STP's ABC dependency often leaves shared libs only in the build tree.
+  local src_dirs=(
+    "$BUILD_ROOT/stp/build"
+    "$BUILD_ROOT/stp/build/lib"
+    "$BUILD_ROOT/stp/build/lib/extlib-abc"
+    /usr/local/lib
+  )
+  local found=0
+  local dir
+  local lib
+  for dir in "${src_dirs[@]}"; do
+    [[ -d "$dir" ]] || continue
+    while IFS= read -r -d '' lib; do
+      $SUDO cp -a "$lib" /usr/local/lib/
+      found=1
+    done < <(find "$dir" -maxdepth 3 \( -name 'libabc*.so*' -o -name 'libstp*.so*' \) -print0 2>/dev/null || true)
+  done
+  if [[ "$found" -eq 1 ]]; then
+    log "Installed ABC/STP runtime shared libraries into /usr/local/lib"
+  fi
+  ensure_local_lib_path
+}
+
 try_apt_stp() {
   log "Trying apt packages (universe repo)"
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -59,21 +91,15 @@ try_apt_stp() {
   [[ "$installed" -eq 1 ]]
 }
 
-stp_has_cryptominisat() {
-  command -v stp >/dev/null && stp --help 2>&1 | grep -q cryptominisat
+stp_runs() {
+  # Return true if stp can execute at all (shared libs resolved).
+  command -v stp >/dev/null || return 1
+  LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}" stp --help >/dev/null 2>&1
 }
 
-find_file() {
-  local name="$1"
-  shift
-  local candidate
-  for candidate in "$@"; do
-    if [[ -f "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
+stp_has_cryptominisat() {
+  stp_runs || return 1
+  LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}" stp --help 2>&1 | grep -q cryptominisat
 }
 
 build_cryptominisat() {
@@ -97,13 +123,10 @@ build_cryptominisat() {
     -DCMAKE_BUILD_TYPE=Release
   cmake --build "$BUILD_ROOT/cryptominisat/build" -j "$NPROC"
   $SUDO cmake --install "$BUILD_ROOT/cryptominisat/build"
-  if command -v ldconfig >/dev/null; then
-    $SUDO ldconfig
-  fi
+  ensure_local_lib_path
 }
 
 build_minisat() {
-  # Prefer STP's maintained MiniSat fork over distro packages.
   if [[ -f /usr/local/include/minisat/core/Solver.h ]] && \
      { [[ -f /usr/local/lib/libminisat.so ]] || [[ -f /usr/local/lib/libminisat.a ]]; }; then
     log "MiniSat already installed under /usr/local"
@@ -117,7 +140,6 @@ build_minisat() {
       "$BUILD_ROOT/minisat"
   fi
 
-  # Wipe stale configure state from earlier failed builds.
   rm -rf "$BUILD_ROOT/minisat/build"
   cmake -S "$BUILD_ROOT/minisat" -B "$BUILD_ROOT/minisat/build" \
     -G Ninja \
@@ -125,9 +147,7 @@ build_minisat() {
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5
   cmake --build "$BUILD_ROOT/minisat/build" -j "$NPROC"
   $SUDO cmake --install "$BUILD_ROOT/minisat/build"
-  if command -v ldconfig >/dev/null; then
-    $SUDO ldconfig
-  fi
+  ensure_local_lib_path
 
   if [[ ! -f /usr/local/include/minisat/core/Solver.h ]]; then
     echo "MiniSat headers missing after install" >&2
@@ -160,6 +180,12 @@ build_stp() {
     fi
   done
 
+  if [[ -z "$CMS_DIR" ]]; then
+    echo "CryptoMiniSat CMake package not found; cannot build STP with --cryptominisat" >&2
+    exit 1
+  fi
+  log "Using CryptoMiniSat package at $CMS_DIR"
+
   MINISAT_INCLUDE="/usr/local/include"
   MINISAT_LIBDIR="/usr/local/lib"
   if [[ ! -f "$MINISAT_INCLUDE/minisat/core/Solver.h" ]]; then
@@ -171,7 +197,7 @@ build_stp() {
     exit 1
   fi
 
-  # Wipe stale STP configure state from earlier failed builds.
+  # Wipe stale STP configure state from earlier failed / incomplete builds.
   rm -rf "$BUILD_ROOT/stp/build"
 
   cmake_args=(
@@ -183,17 +209,17 @@ build_stp() {
     -Wno-dev
     "-DMINISAT_INCLUDE_DIRS=$MINISAT_INCLUDE"
     "-DMINISAT_LIBDIR=$MINISAT_LIBDIR"
+    "-Dcryptominisat5_DIR=$CMS_DIR"
   )
-  if [[ -n "$CMS_DIR" ]]; then
-    cmake_args+=("-Dcryptominisat5_DIR=$CMS_DIR")
-  fi
 
   cmake "${cmake_args[@]}"
+  if ! grep -qi cryptominisat "$BUILD_ROOT/stp/build/CMakeCache.txt" 2>/dev/null; then
+    log "WARNING: CMake cache does not mention cryptominisat; check configure output"
+  fi
+
   cmake --build "$BUILD_ROOT/stp/build" -j "$NPROC"
   $SUDO cmake --install "$BUILD_ROOT/stp/build"
-  if command -v ldconfig >/dev/null; then
-    $SUDO ldconfig
-  fi
+  install_runtime_libs_from_build
 }
 
 if try_apt_stp && stp_has_cryptominisat; then
@@ -205,15 +231,31 @@ else
   build_stp
 fi
 
+# Always refresh runtime libs after whatever install path we took.
+install_runtime_libs_from_build
+
 log "Checking STP + CryptoMiniSat"
 if ! command -v stp >/dev/null; then
   echo "stp not found after install/build" >&2
   exit 1
 fi
-if ! stp_has_cryptominisat; then
-  echo "stp was installed but --cryptominisat is not available" >&2
-  stp --help 2>&1 | head -20 >&2 || true
+if ! stp_runs; then
+  echo "stp cannot start (shared library problem). Searching for libabc..." >&2
+  find "$BUILD_ROOT" /usr/local -name 'libabc*.so*' 2>/dev/null | head -20 >&2 || true
+  ldd "$(command -v stp)" 2>&1 | head -40 >&2 || true
   exit 1
+fi
+if ! stp_has_cryptominisat; then
+  echo "stp runs but --cryptominisat is not available; rebuilding STP against CMS" >&2
+  # Force a clean rebuild with CMS.
+  rm -rf "$BUILD_ROOT/stp/build"
+  # Temporarily shadow the check so build_stp does not early-return.
+  build_stp
+  if ! stp_has_cryptominisat; then
+    echo "stp still missing --cryptominisat after rebuild" >&2
+    LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}" stp --help 2>&1 | head -40 >&2 || true
+    exit 1
+  fi
 fi
 
 TMP_CVC="$(mktemp /tmp/stp_smoke_XXXXXX.cvc)"
@@ -224,7 +266,8 @@ QUERY FALSE;
 COUNTEREXAMPLE;
 EOF
 
-if ! stp "$TMP_CVC" --cryptominisat --threads 2 >/dev/null; then
+if ! LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}" \
+    stp "$TMP_CVC" --cryptominisat --threads 2 >/dev/null; then
   echo "stp --cryptominisat smoke test failed" >&2
   rm -f "$TMP_CVC"
   exit 1
